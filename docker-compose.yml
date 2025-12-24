@@ -1,0 +1,43 @@
+version: '3.8'
+
+services:
+  chaos-app:
+    build:
+      context: ./chaos-app
+    container_name: chaos-app
+    ports:
+      - "8000:8000"
+    volumes:
+      - shared-logs:/var/log/chaos-app
+    networks:
+      - codeweaver-net
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8000/" ]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  codeweaver-agent:
+    build:
+      context: ./Core
+    container_name: codeweaver-agent
+    ports:
+      - "8001:8001"
+    volumes:
+      - shared-logs:/logs
+    environment:
+      - GROQ_API_KEY=${GROQ_API_KEY}
+    depends_on:
+      chaos-app:
+        condition: service_healthy
+    networks:
+      - codeweaver-net
+
+volumes:
+  shared-logs:
+    driver: local
+
+networks:
+  codeweaver-net:
+    driver: bridge
