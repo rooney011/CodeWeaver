@@ -1,0 +1,17 @@
+# Core dependencies
+fastapi
+uvicorn
+pydantic
+python-dotenv
+httpx
+
+# LLM and AI
+langgraph
+langchain
+langchain_groq
+
+# Dashboard
+streamlit
+pandas
+numpy
+requests

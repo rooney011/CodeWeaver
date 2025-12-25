@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chaos Store - Premium DevOps Gear</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%);
+            color: #e8e8e8;
+            min-height: 100vh;
+            padding: 2rem;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 3rem;
+            padding: 2rem;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 20px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        h1 {
+            font-size: 3rem;
+            background: linear-gradient(45deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 0.5rem;
+            font-weight: 700;
+        }
+
+        .tagline {
+            color: #a0a0a0;
+            font-size: 1.1rem;
+            margin-top: 0.5rem;
+        }
+
+        .products-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            gap: 2rem;
+            margin-bottom: 3rem;
+        }
+
+        .product-card {
+            background: rgba(255, 255, 255, 0.08);
+            border-radius: 20px;
+            padding: 2rem;
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            transition: all 0.3s ease;
+            backdrop-filter: blur(10px);
+        }
+
+        .product-card:hover {
+            transform: translateY(-5px);
+            border-color: rgba(102, 126, 234, 0.5);
+            box-shadow: 0 10px 40px rgba(102, 126, 234, 0.3);
+        }
+
+        .product-icon {
+            font-size: 3rem;
+            margin-bottom: 1rem;
+        }
+
+        .product-name {
+            font-size: 1.5rem;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+            color: #fff;
+        }
+
+        .product-description {
+            color: #b0b0b0;
+            margin-bottom: 1rem;
+            line-height: 1.6;
+        }
+
+        .product-price {
+            font-size: 2rem;
+            font-weight: 700;
+            color: #667eea;
+            margin-bottom: 1.5rem;
+        }
+
+        .buy-button {
+            width: 100%;
+            padding: 1rem 2rem;
+            font-size: 1.1rem;
+            font-weight: 600;
+            border: none;
+            border-radius: 12px;
+            background: linear-gradient(45deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .buy-button:hover {
+            transform: scale(1.05);
+            box-shadow: 0 5px 20px rgba(102, 126, 234, 0.5);
+        }
+
+        .buy-button:active {
+            transform: scale(0.98);
+        }
+
+        .buy-button:disabled {
+            opacity: 0.7;
+            cursor: not-allowed;
+        }
+
+        /* Loading Spinner */
+        .spinner {
+            display: none;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
+            border-top-color: white;
+            animation: spin 0.8s linear infinite;
+            margin: 0 auto;
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        /* Status Messages */
+        .status-message {
+            display: none;
+            margin-top: 1rem;
+            padding: 1rem;
+            border-radius: 10px;
+            text-align: center;
+            font-weight: 600;
+            animation: slideIn 0.3s ease;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(-10px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .status-success {
+            background: rgba(76, 175, 80, 0.2);
+            border: 1px solid rgba(76, 175, 80, 0.5);
+            color: #4caf50;
+        }
+
+        .status-error {
+            background: rgba(244, 67, 54, 0.2);
+            border: 1px solid rgba(244, 67, 54, 0.5);
+            color: #f44336;
+        }
+
+        /* Server Status Indicator */
+        .server-status {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.75rem 1.25rem;
+            background: rgba(0, 0, 0, 0.5);
+            border-radius: 25px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            font-size: 0.9rem;
+            z-index: 1000;
+        }
+
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #4caf50;
+            animation: pulse 2s infinite;
+        }
+
+        .status-dot.offline {
+            background: #f44336;
+            animation: none;
+        }
+
+        @keyframes pulse {
+
+            0%,
+            100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0.5;
+            }
+        }
+
+        .icon {
+            font-size: 1.5rem;
+        }
+
+        .checkmark {
+            color: #4caf50;
+        }
+
+        .cross {
+            color: #f44336;
+        }
+    </style>
+</head>
+
+<body>
+    <!-- Server Status Indicator -->
+    <div class="server-status">
+        <div class="status-dot" id="statusDot"></div>
+        <span id="statusText">Server Online</span>
+    </div>
+
+    <div class="container">
+        <header>
+            <h1>⚡ Chaos Store</h1>
+            <p class="tagline">Premium DevOps & Engineering Gear</p>
+        </header>
+
+        <div class="products-grid">
+            <!-- Product 1: DevOps Hoodie -->
+            <div class="product-card">
+                <!-- <div class="product-icon">👕</div> -->
+                <h2 class="product-name">DevOps Hoodie</h2>
+                <p class="product-description">Premium quality hoodie with "Deploy on Friday" slogan. Perfect for
+                    late-night debugging sessions.</p>
+                <div class="product-price">₹150</div>
+                <button class="buy-button" onclick="buyProduct('DevOps Hoodie', this)">
+                    <span class="button-text">Buy Now</span>
+                </button>
+                <div class="spinner"></div>
+                <div class="status-message"></div>
+            </div>
+
+            <!-- Product 2: Kubernetes Cap -->
+            <div class="product-card">
+                <!-- <div class="product-icon">🧢</div> -->
+                <h2 class="product-name">Kubernetes Cap</h2>
+                <p class="product-description">Show your container orchestration pride with this stylish K8s cap. One
+                    size fits all clusters.</p>
+                <div class="product-price">₹299</div>
+                <button class="buy-button" onclick="buyProduct('Kubernetes Cap', this)">
+                    <span class="button-text">Buy Now</span>
+                </button>
+                <div class="spinner"></div>
+                <div class="status-message"></div>
+            </div>
+
+            <!-- Product 3: Mechanical Keyboard -->
+            <div class="product-card">
+                <!-- <div class="product-icon">⌨️</div> -->
+                <h2 class="product-name">Mechanical Keyboard</h2>
+                <p class="product-description">Cherry MX switches for the ultimate typing experience. RGB lighting
+                    included for extra productivity.</p>
+                <div class="product-price">₹1499</div>
+                <button class="buy-button" onclick="buyProduct('Mechanical Keyboard', this)">
+                    <span class="button-text">Buy Now</span>
+                </button>
+                <div class="spinner"></div>
+                <div class="status-message"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Auto-refresh server status every 2 seconds
+        async function checkServerStatus() {
+            const statusDot = document.getElementById('statusDot');
+            const statusText = document.getElementById('statusText');
+
+            try {
+                const response = await fetch('/health');
+                if (response.ok) {
+                    statusDot.classList.remove('offline');
+                    statusText.textContent = 'Server Online';
+                } else {
+                    statusDot.classList.add('offline');
+                    statusText.textContent = 'Server Error';
+                }
+            } catch (error) {
+                statusDot.classList.add('offline');
+                statusText.textContent = 'Server Offline';
+            }
+        }
+
+        // Check status immediately and then every 2 seconds
+        checkServerStatus();
+        setInterval(checkServerStatus, 2000);
+
+        // Buy product function
+        async function buyProduct(productName, buttonElement) {
+            const card = buttonElement.closest('.product-card');
+            const buttonText = card.querySelector('.button-text');
+            const spinner = card.querySelector('.spinner');
+            const statusMessage = card.querySelector('.status-message');
+
+            console.log(`[Chaos Store] Attempting to buy: ${productName}`);
+
+            // Reset previous status
+            statusMessage.style.display = 'none';
+            statusMessage.className = 'status-message';
+
+            // Show loading state
+            buttonText.textContent = 'Processing...';
+            buttonElement.disabled = true;
+            spinner.style.display = 'block';
+
+            try {
+                const response = await fetch('/buy');
+
+                console.log(`[Chaos Store] Response status: ${response.status}`);
+
+                // Hide spinner
+                spinner.style.display = 'none';
+
+                // Explicitly check if response is NOT ok (status not in 200-299 range)
+                if (!response.ok) {
+                    // This handles 500, 404, and any other error status codes
+                    console.error(`[Chaos Store] Payment failed with status: ${response.status}`);
+                    throw new Error(`Payment Failed - Server returned ${response.status}`);
+                }
+
+                // Success path (200-299)
+                console.log('[Chaos Store] Payment successful!');
+                statusMessage.className = 'status-message status-success';
+                statusMessage.innerHTML = '<span class="icon checkmark">✓</span> Order Placed Successfully!';
+                statusMessage.style.display = 'block';
+                buttonText.textContent = 'Order Complete';
+
+                // Reset button after 3 seconds
+                setTimeout(() => {
+                    buttonText.textContent = 'Buy Now';
+                    buttonElement.disabled = false;
+                    statusMessage.style.display = 'none';
+                }, 3000);
+
+            } catch (error) {
+                // Handle ALL errors: network errors, 500 errors, etc.
+                console.error('[Chaos Store] Error during purchase:', error);
+
+                spinner.style.display = 'none';
+                statusMessage.className = 'status-message status-error';
+                statusMessage.innerHTML = '<span class="icon cross">✗</span> Payment Failed! Server Error';
+                statusMessage.style.display = 'block';
+                buttonText.textContent = 'Try Again';
+                buttonElement.disabled = false;
+
+                // Hide error message after 5 seconds
+                setTimeout(() => {
+                    statusMessage.style.display = 'none';
+                    buttonText.textContent = 'Buy Now';
+                }, 5000);
+            }
+        }
+    </script>
+</body>
+
+</html>

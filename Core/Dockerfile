@@ -8,6 +8,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
+# Expose only the API port
 EXPOSE 8001
 
+# Run FastAPI backend only
 CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8001"]

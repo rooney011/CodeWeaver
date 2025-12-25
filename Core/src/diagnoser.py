@@ -4,10 +4,18 @@ from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_core.output_parsers import JsonOutputParser
 
 
+import logging
+
+# Configure logger
+logger = logging.getLogger("codeweaver-agent")
+
 class DiagnosisResult(BaseModel):
-    """Pydantic model for diagnosis results"""
-    root_cause: str = Field(description="The identified root cause of the issue")
+    """Pydantic model for diagnosis results with detailed crash information"""
+    root_cause: str = Field(description="Short summary of the root cause (e.g., Database Connection Failed)")
     confidence: float = Field(description="Confidence level between 0.0 and 1.0")
+    file_name: str = Field(description="The file causing the error (e.g., main.py or payment_service.py)", default="Unknown")
+    line_number: str = Field(description="The line number where the error occurred (e.g., 42)", default="Unknown")
+    code_snippet: str = Field(description="The specific line of code or stack trace snippet if visible", default="No stack trace available")
 
 
 class Diagnoser:
@@ -26,11 +34,16 @@ class Diagnoser:
         # Build system prompt with format instructions
         format_instructions = self.parser.get_format_instructions()
         self.system_prompt = (
-            "You are an expert SRE. Analyze the following logs specifically looking for "
-            "errors, exceptions, or latency warnings. "
+            "You are an expert SRE. Extract specific crash details from the logs. "
+            "Look for errors, exceptions, stack traces, or latency warnings. "
             "Output ONLY valid JSON. Do not include any conversational text or markdown formatting like ```json. "
             f"\n\n{format_instructions}\n\n"
-            "If no error is found, set confidence to 0.0."
+            "Extract these details:\n"
+            "- root_cause: Short summary (e.g., 'Database Connection Failed')\n"
+            "- file_name: The file causing the error (e.g., 'main.py' or 'payment_service.py')\n"
+            "- line_number: The line number (e.g., '42')\n"
+            "- code_snippet: The specific line of code or stack trace snippet if visible\n"
+            "If no error is found, set confidence to 0.0 and use 'Unknown' for missing fields."
         )
     
     def analyze_logs(self, log_path: str) -> dict:
@@ -72,10 +85,17 @@ class Diagnoser:
             
             # Parse the JSON response using the output parser
             result = self.parser.parse(response.content)
+            
+            # STORY LOGGING: Diagnoser result
+            root_cause = result.get('root_cause', 'unknown')
+            confidence = result.get('confidence', 0.0)
+            logger.info(f"[DIAGNOSER] ❌ Root Cause Found: {root_cause} (Confidence: {confidence})")
+            
             return result
             
         except Exception as e:
             # If parsing fails, return a fallback response
+            logger.error(f"[DIAGNOSER] Analysis failed: {str(e)}")
             return {
                 "root_cause": f"LLM analysis failed: {str(e)}",
                 "confidence": 0.0
