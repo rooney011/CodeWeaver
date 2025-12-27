@@ -2,6 +2,7 @@ from pydantic import BaseModel, Field
 from langchain_groq import ChatGroq
 from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_core.output_parsers import JsonOutputParser
+from typing import List
 
 
 import logging
@@ -11,9 +12,10 @@ logger = logging.getLogger("codeweaver-agent")
 
 class DiagnosisResult(BaseModel):
     """Pydantic model for diagnosis results with detailed crash information"""
-    root_cause: str = Field(description="Short summary of the root cause (e.g., Database Connection Failed)")
+    root_cause: str = Field(description="Short summary of the root cause (e.g., Database Connection Failed, Memory Exhaustion, Timeout)")
     confidence: float = Field(description="Confidence level between 0.0 and 1.0")
-    file_name: str = Field(description="The file causing the error (e.g., main.py or payment_service.py)", default="Unknown")
+    file_name: str = Field(description="The primary file causing the error (e.g., main.py or payment_service.py)", default="Unknown")
+    involved_files: List[str] = Field(description="List of ALL file names found in the stack trace (e.g., ['main.py', 'service.py', 'db.py'])", default_factory=list)
     line_number: str = Field(description="The line number where the error occurred (e.g., 42)", default="Unknown")
     code_snippet: str = Field(description="The specific line of code or stack trace snippet if visible", default="No stack trace available")
 
@@ -39,8 +41,9 @@ class Diagnoser:
             "Output ONLY valid JSON. Do not include any conversational text or markdown formatting like ```json. "
             f"\n\n{format_instructions}\n\n"
             "Extract these details:\n"
-            "- root_cause: Short summary (e.g., 'Database Connection Failed')\n"
-            "- file_name: The file causing the error (e.g., 'main.py' or 'payment_service.py')\n"
+            "- root_cause: Short summary (e.g., 'Database Connection Failed', 'Memory Leak Detected', 'Latency Spike')\n"
+            "- file_name: The PRIMARY file where the error originated.\n"
+            "- involved_files: A list of ALL unique file names mentioned in the stack trace (e.g. ['main.py', 'utils.py']).\n"
             "- line_number: The line number (e.g., '42')\n"
             "- code_snippet: The specific line of code or stack trace snippet if visible\n"
             "If no error is found, set confidence to 0.0 and use 'Unknown' for missing fields."
@@ -54,7 +57,7 @@ class Diagnoser:
             log_path: Path to the log file to analyze
             
         Returns:
-            Dictionary with root_cause and confidence keys
+            Dictionary with diagnosis results
         """
         # Read the last 50 lines from the log file
         try:
@@ -89,7 +92,8 @@ class Diagnoser:
             # STORY LOGGING: Diagnoser result
             root_cause = result.get('root_cause', 'unknown')
             confidence = result.get('confidence', 0.0)
-            logger.info(f"[DIAGNOSER] ❌ Root Cause Found: {root_cause} (Confidence: {confidence})")
+            involved = result.get('involved_files', [])
+            logger.info(f"[DIAGNOSER] ❌ Root Cause Found: {root_cause} (Files: {involved})")
             
             return result
             

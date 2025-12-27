@@ -1,215 +1,208 @@
-from fastapi import FastAPI
+import logging
+import os
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import Any, Dict
+from typing import Optional, Dict, Any
 from dotenv import load_dotenv
+
 from src.diagnoser import Diagnoser
 from src.planner import generate_plan
 from src.executor import execute_plan
-import logging
-from pathlib import Path
 
-# Load environment variables from .env file
+# Load environment variables
 load_dotenv()
 
-# Configure logging to write to shared log file
-log_file = Path("/logs/service.log")  # Shared volume with chaos-app
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger("codeweaver-agent")
-logger.setLevel(logging.INFO)
 
-# File handler for shared logs (so dashboard can see agent activity)
-try:
-    # Create directory if it doesn't exist
-    log_file.parent.mkdir(parents=True, exist_ok=True)
-    file_handler = logging.FileHandler(log_file, mode='a', encoding='utf-8')
-    file_handler.setLevel(logging.INFO)
-    file_formatter = logging.Formatter('%(asctime)s - [AGENT] %(levelname)s - %(message)s',
-                                       datefmt='%Y-%m-%d %H:%M:%S')
-    file_handler.setFormatter(file_formatter)
-    logger.addHandler(file_handler)
-except Exception as e:
-    print(f"Warning: Could not create shared log file handler: {e}")
+# Initialize FastAPI app
+app = FastAPI(title="CodeWeaver SRE Agent", version="2.0.0")
 
-# Console handler (for docker logs)
-console_handler = logging.StreamHandler()
-console_handler.setLevel(logging.INFO)
-console_formatter = logging.Formatter('%(asctime)s - [AGENT] %(levelname)s - %(message)s',
-                                      datefmt='%Y-%m-%d %H:%M:%S')
-console_handler.setFormatter(console_formatter)
-logger.addHandler(console_handler)
-
-app = FastAPI(title="CodeWeaver SRE Agent", version="1.0.0")
-
-# Enable CORS for Next.js dashboard
+# Enable CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins for Docker networking
+    allow_origins=["*"],
     allow_credentials=True,
-    allow_methods=["*"],  # Allow all methods (GET, POST, etc.)
-    allow_headers=["*"],  # Allow all headers
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
-# Global variable to store the current plan waiting for approval
-CURRENT_PLAN = {}
+# Global state for current plan
+CURRENT_PLAN: Optional[Dict[str, Any]] = None
 
+# Initialize components
+diagnoser = Diagnoser()
+
+# Pydantic models
+class AlertData(BaseModel):
+    source: str
+    severity: str
+    message: str
+    timestamp: str
+    log_path: str
 
 class AlertPayload(BaseModel):
-    """Generic alert payload model"""
-    data: Dict[str, Any]
+    data: AlertData
 
+class PlanResponse(BaseModel):
+    status: str
+    plan: Optional[Dict[str, Any]] = None
 
 @app.get("/")
 async def root():
     """Health check endpoint"""
-    return {"status": "ok", "service": "CodeWeaver SRE Agent"}
-
+    return {"status": "operational", "service": "codeweaver-agent"}
 
 @app.get("/health")
 async def health_check():
-    """Explicit health check endpoint for dashboard connectivity"""
-    return {"status": "ok", "service": "CodeWeaver SRE Agent"}
-
+    """Detailed health check"""
+    return {
+        "status": "healthy",
+        "components": {
+            "diagnoser": "ready",
+            "planner": "ready",
+            "executor": "ready"
+        }
+    }
 
 @app.post("/webhook/alert")
 async def receive_alert(payload: AlertPayload):
     """
-    Webhook endpoint to receive alerts from monitoring systems.
-    
-    Args:
-        payload: Generic JSON payload containing alert data
-        
-    Returns:
-        Acknowledgment of received alert with diagnosis and action plan (awaiting approval)
+    Receive alert from chaos-app and trigger diagnosis + planning
     """
     global CURRENT_PLAN
     
     try:
-        # 1. Start the Story - AGENT
-        logger.info(f"[AGENT] 🚨 Alert Received: {payload.data.get('message', 'Unknown Alert')}")
+        logger.info(f"[AGENT] 🚨 Alert received from {payload.data.source}")
+        logger.info(f"[AGENT] Severity: {payload.data.severity}")
+        logger.info(f"[AGENT] Message: {payload.data.message}")
         
-        # Get log path from payload or use default
-        # In Docker, logs are shared via volume at /logs/chaos-app/service.log
-        # For local development, use test_logs.txt
-        log_path = payload.data.get('log_path', '/logs/service.log')
+        # Step 1: Diagnose the issue
+        logger.info("[AGENT] 🔍 Analyzing logs...")
+        log_path = payload.data.log_path
         
-        # 2. Continue Story - DIAGNOSER
-        logger.info(f"[DIAGNOSER] 🔍 Reading logs from {log_path}...")
+        # Read logs from the shared volume
+        try:
+            with open(log_path, 'r') as f:
+                # Read last 100 lines
+                lines = f.readlines()
+                log_content = ''.join(lines[-100:])
+        except FileNotFoundError:
+            logger.error(f"[AGENT] Log file not found: {log_path}")
+            log_content = f"Alert Message: {payload.data.message}"
         
-        # Initialize diagnoser and analyze logs
-        diagnoser = Diagnoser()
-        diagnosis = diagnoser.analyze_logs(log_path)
-        # Detailed diagnosis log moved to diagnoser.py
+        diagnosis = diagnoser.analyze_logs(log_content)
         
-        # Generate action plan based on diagnosis
-        # Plan generation log moved to planner.py
+        logger.info(f"[AGENT] 📊 Diagnosis Complete:")
+        logger.info(f"  - Root Cause: {diagnosis.get('root_cause')}")
+        logger.info(f"  - Confidence: {diagnosis.get('confidence')}")
+        logger.info(f"  - File: {diagnosis.get('file_name')}:{diagnosis.get('line_number')}")
+        logger.info(f"  - Involved Files: {diagnosis.get('involved_files', [])}")
+        
+        # Step 2: Generate remediation plan
+        logger.info("[AGENT] 📝 Generating remediation plan...")
         plan = generate_plan(diagnosis)
         
-        # 3. Save Plan and Status
-        CURRENT_PLAN = plan
-        CURRENT_PLAN['status'] = 'pending'
+        logger.info(f"[AGENT] Plan Generated: {plan.get('action')}")
+        logger.info(f"[AGENT] Reason: {plan.get('reason')}")
         
-        logger.info("[AGENT] ⚠️ Plan waiting for approval...")
+        # Store plan globally
+        CURRENT_PLAN = {
+            **plan,
+            "status": "pending"
+        }
         
-        # Flush immediately to shared log
-        for handler in logger.handlers:
-            handler.flush()
+        logger.info("[AGENT] ⚠️  Plan awaiting human approval")
         
         return {
-            "status": "waiting_for_approval",
-            "message": "Alert received and plan generated. Awaiting human approval.",
-            "diagnosis": diagnosis,
-            "plan": CURRENT_PLAN
+            "status": "plan_generated",
+            "plan_id": plan.get("id"),
+            "action": plan.get("action")
         }
+        
     except Exception as e:
-        logger.error(f"Error processing alert: {str(e)}")
-        # Flush immediately
-        for handler in logger.handlers:
-            handler.flush()
-        
-        return {
-            "status": "error",
-            "message": f"Internal error processing alert: {str(e)}"
-        }
-
+        logger.error(f"[AGENT] Error processing alert: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/plan/pending")
-async def get_pending_plan():
+async def get_pending_plan() -> PlanResponse:
     """
-    Get the current plan that is waiting for approval.
-    Returns status 'empty' if no plan, 'pending' if plan exists.
+    Get the current pending plan (if any)
     """
-    if not CURRENT_PLAN:
-        return {
-            "status": "empty",
-            "plan": None
-        }
+    global CURRENT_PLAN
     
-    return {
-        "status": "pending",
-        "plan": CURRENT_PLAN
-    }
-
+    if CURRENT_PLAN and CURRENT_PLAN.get("status") == "pending":
+        return PlanResponse(status="pending", plan=CURRENT_PLAN)
+    
+    return PlanResponse(status="empty", plan=None)
 
 @app.post("/plan/approve")
 async def approve_plan():
     """
-    Approve and execute the pending plan.
-    
-    Returns:
-        Execution result or error if no plan is pending
+    Approve and execute the current plan
     """
     global CURRENT_PLAN
     
-    if not CURRENT_PLAN:
+    if not CURRENT_PLAN or CURRENT_PLAN.get("status") != "pending":
+        raise HTTPException(status_code=400, detail="No pending plan to approve")
+    
+    try:
+        logger.info(f"[AGENT] ✅ Plan approved by human operator")
+        logger.info(f"[AGENT] Executing: {CURRENT_PLAN.get('action')}")
+        
+        # Execute the plan
+        result = await execute_plan(CURRENT_PLAN)
+        
+        logger.info(f"[AGENT] Execution result: {result.get('status')}")
+        
+        # Clear the plan
+        CURRENT_PLAN = None
+        
         return {
-            "status": "error",
-            "message": "No plan is currently waiting for approval"
+            "status": "executed",
+            "result": result
         }
-    
-    # Executing the approved plan - STORY: EXECUTOR
-    logger.info("[EXECUTOR] 🛠️ User Approved. Executing remediation plan...")
-    execution_result = await execute_plan(CURRENT_PLAN)
-    logger.info("[EXECUTOR] ✅ Execution Successful. Service Restored.")
-    logger.info(f"[EXECUTOR] Detailed Result: {execution_result.get('status', 'unknown')}")
-    
-    # Flush immediately
-    for handler in logger.handlers:
-        handler.flush()
-    
-    # Clear the current plan after execution
-    executed_plan = CURRENT_PLAN
-    CURRENT_PLAN = {}
-    
-    return {
-        "status": "approved",
-        "message": "Plan approved and executed",
-        "plan": executed_plan,
-        "execution": execution_result
-    }
-
+        
+    except Exception as e:
+        logger.error(f"[AGENT] Execution failed: {str(e)}")
+        CURRENT_PLAN = None
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/plan/reject")
 async def reject_plan():
     """
-    Reject the pending plan.
-    
-    Returns:
-        Confirmation of rejection
+    Reject the current plan
     """
     global CURRENT_PLAN
     
-    if not CURRENT_PLAN:
-        return {
-            "status": "no_pending_plan",
-            "message": "No plan is currently waiting for approval"
-        }
+    if not CURRENT_PLAN or CURRENT_PLAN.get("status") != "pending":
+        raise HTTPException(status_code=400, detail="No pending plan to reject")
     
-    # Clear the current plan
-    rejected_plan = CURRENT_PLAN
-    CURRENT_PLAN = {}
+    logger.info(f"[AGENT] ❌ Plan rejected by human operator")
+    CURRENT_PLAN = None
     
+    return {"status": "rejected"}
+
+@app.get("/status")
+async def get_status():
+    """
+    Get agent status and current activity
+    """
     return {
-        "status": "rejected",
-        "message": "Plan has been rejected",
-        "plan": rejected_plan
+        "agent_status": "active",
+        "current_plan": "pending" if CURRENT_PLAN else "none",
+        "components": {
+            "diagnoser": "operational",
+            "planner": "operational",
+            "executor": "operational"
+        }
     }
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8001)

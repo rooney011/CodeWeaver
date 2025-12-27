@@ -19,11 +19,13 @@ interface Plan {
     id: string
     root_cause: string
     file_name: string
+    involved_files?: string[]
     line_number: number
     code_snippet: string
     action: string
     target: string
     reason: string
+    python_script?: string // The autonomous code
 }
 
 interface ServiceStatus {
@@ -38,6 +40,7 @@ export default function Dashboard() {
     const [logs, setLogs] = useState<LogEntry[]>([])
     const [plan, setPlan] = useState<Plan | null>(null)
     const [isProcessing, setIsProcessing] = useState(false)
+    const [activeTab, setActiveTab] = useState<string>('Problem.log')
     const terminalEndRef = useRef<HTMLDivElement>(null)
 
     const [services, setServices] = useState<ServiceStatus[]>([
@@ -46,6 +49,17 @@ export default function Dashboard() {
         { name: 'InventoryCore', status: 'active' },
         { name: 'NotificationEngine', status: 'active' }
     ])
+
+    // Notification system
+    const [notification, setNotification] = useState<{
+        message: string;
+        type: 'success' | 'error' | 'info';
+    } | null>(null)
+
+    const showNotification = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
+        setNotification({ message, type })
+        setTimeout(() => setNotification(null), 4000)
+    }
 
     // Scroll terminal to bottom
     useEffect(() => {
@@ -65,12 +79,21 @@ export default function Dashboard() {
                         setLatency('TIMEOUT')
                         setServices(prev => prev.map(s => s.name === 'PaymentService' ? { ...s, status: 'down' } : s))
                     } else {
-                        setSystemStatus('OPTIMAL')
-                        setLatency('42ms')
-                        setServices(prev => prev.map(s => ({ ...s, status: 'active' })))
+                        // Check headers/body for latency warning
+                        const data = await check.json()
+                        if (data.note === 'High Latency') {
+                            setSystemStatus('DEGRADED')
+                            setLatency(data.latency)
+                            setServices(prev => prev.map(s => s.name === 'PaymentService' ? { ...s, status: 'degraded' } : s))
+                        } else {
+                            setSystemStatus('OPTIMAL')
+                            setLatency('42ms')
+                            setServices(prev => prev.map(s => ({ ...s, status: 'active' })))
+                        }
                     }
                 } catch (e) {
                     setSystemStatus('CRITICAL')
+                    setServices(prev => prev.map(s => s.name === 'PaymentService' ? { ...s, status: 'down' } : s))
                 }
             }
         } catch (error) {
@@ -85,8 +108,14 @@ export default function Dashboard() {
             const data = await res.json()
             if (data.status === 'pending' && data.plan) {
                 setPlan(data.plan)
+                // If new plan comes in, default to first involved file if available, else problem.log
+                // Only switch if we aren't already looking at a file
+                if (activeTab === 'Problem.log' && data.plan.involved_files && data.plan.involved_files.length > 0) {
+                    // Optionally auto-switch, but user might want to see log first. Let's keep Problem.log as default.
+                }
             } else {
                 setPlan(null)
+                if (activeTab !== 'Problem.log') setActiveTab('Problem.log')
             }
         } catch (error) {
             // Keep existing plan or null
@@ -113,10 +142,15 @@ export default function Dashboard() {
             const res = await fetch(`${AGENT_API}/plan/approve`, { method: 'POST', signal: AbortSignal.timeout(5000) })
             if (res.ok) {
                 setPlan(null)
-                alert('Plan Approved! Agent is executing fix...')
+                showNotification('Plan Approved! Agent is executing fix...', 'success')
+                // Immediately refresh health to clear red status
+                setTimeout(() => {
+                    fetchHealth()
+                    fetchLogs()
+                }, 1000)
             }
         } catch (error) {
-            alert('Failed to approve plan.')
+            showNotification('Failed to approve plan', 'error')
         } finally {
             setIsProcessing(false)
         }
@@ -129,11 +163,27 @@ export default function Dashboard() {
             const res = await fetch(`${AGENT_API}/plan/reject`, { method: 'POST', signal: AbortSignal.timeout(5000) })
             if (res.ok) {
                 setPlan(null)
+                showNotification('Plan rejected', 'info')
             }
         } catch (error) {
-            alert('Failed to reject plan.')
+            showNotification('Failed to reject plan', 'error')
         } finally {
             setIsProcessing(false)
+        }
+    }
+
+    // Chaos Control Functions
+    const triggerChaos = async (type: string) => {
+        try {
+            let endpoint = '/chaos/trigger'
+            if (type === 'memory') endpoint = '/chaos/trigger/memory'
+            if (type === 'latency') endpoint = '/chaos/trigger/latency'
+            if (type === 'cascade') endpoint = '/chaos/trigger/cascade'
+
+            await fetch(`${CHAOS_API}${endpoint}`, { method: 'POST' })
+            showNotification(`Chaos triggered: ${type}`, 'info')
+        } catch (e) {
+            showNotification('Failed to trigger chaos', 'error')
         }
     }
 
@@ -195,25 +245,27 @@ export default function Dashboard() {
                             <span className="status-dot green"></span>
                             dashboard-next
                         </div>
-
-                        {services.map(s => (
-                            s.name !== 'AuthService' && // Just show extra services
-                            <div key={s.name} className="explorer-item" style={{ marginLeft: '10px', opacity: 0.8 }}>
-                                <span className={`status-dot ${s.status === 'active' ? 'green' : 'red'}`}></span>
-                                {s.name}
-                            </div>
-                        ))}
                     </div>
                 </div>
 
+                {/* CHAOS CONTROL SECTION */}
                 <div className="explorer-section">
                     <div className="explorer-title">
-                        <span>▼ OUTLINE</span>
+                        <span>▼ CHAOS CONTROL</span>
                     </div>
-                </div>
-                <div className="explorer-section">
-                    <div className="explorer-title">
-                        <span>▼ TIMELINE</span>
+                    <div className="explorer-content" style={{ padding: '10px' }}>
+                        <button className="btn-vscode small" onClick={() => triggerChaos('db')} style={{ width: '100%', marginBottom: '5px' }}>
+                            ⚡ Break DB
+                        </button>
+                        <button className="btn-vscode small" onClick={() => triggerChaos('memory')} style={{ width: '100%', marginBottom: '5px' }}>
+                            📝 Memory Leak
+                        </button>
+                        <button className="btn-vscode small" onClick={() => triggerChaos('latency')} style={{ width: '100%', marginBottom: '5px' }}>
+                            🐢 Latency Spike
+                        </button>
+                        <button className="btn-vscode small" onClick={() => triggerChaos('cascade')} style={{ width: '100%' }}>
+                            🌊 Cascade Fail
+                        </button>
                     </div>
                 </div>
             </div>
@@ -221,25 +273,55 @@ export default function Dashboard() {
             {/* 3. Main Editor Area */}
             <div className="editor-area">
 
-                {/* Pane 1: Problem Log */}
+                {/* Pane 1: Dynamic Tabs & File Content */}
                 <div className="editor-group flex-grow">
                     <div className="tab-header">
-                        <div className="tab active">
+                        {/* Always show Problem.log */}
+                        <div
+                            className={`tab ${activeTab === 'Problem.log' ? 'active' : ''}`}
+                            onClick={() => setActiveTab('Problem.log')}
+                        >
                             <img src="https://raw.githubusercontent.com/vscode-icons/vscode-icons/master/icons/file-type-log.svg" className="tab-icon" alt="" />
                             Problem.log
-                            <span className="tab-close">×</span>
                         </div>
+
+                        {/* Dynamic Tabs for Involved Files */}
+                        {plan && plan.involved_files && plan.involved_files.map((file, idx) => (
+                            <div
+                                key={idx}
+                                className={`tab ${activeTab === file ? 'active' : ''}`}
+                                onClick={() => setActiveTab(file)}
+                            >
+                                <img src="https://raw.githubusercontent.com/vscode-icons/vscode-icons/master/icons/file-type-python.svg" className="tab-icon" alt="" />
+                                {file}
+                                <span className="tab-close">×</span>
+                            </div>
+                        ))}
                     </div>
+
                     <div className="editor-content problem-log">
-                        {plan ? (
-                            <>
-                                <div className="log-entry error">[ERROR] {new Date().toISOString().replace('T', ' ').split('.')[0]} ConnectionRefusedError: Unable to connect to database at 192.168.1.55 [{plan.file_name}:{plan.line_number}]</div>
-                                <div className="log-entry" style={{ marginTop: '10px', opacity: 0.8 }}>Stack Trace:</div>
-                                <div className="log-entry">{plan.code_snippet}</div>
-                                <div className="log-entry" style={{ marginTop: '10px', color: '#cca700' }}>Analysis: {plan.root_cause}</div>
-                            </>
+                        {activeTab === 'Problem.log' ? (
+                            // View 1: Problem Log Summary
+                            plan ? (
+                                <>
+                                    <div className="log-entry error">[ERROR] {new Date().toISOString().replace('T', ' ').split('.')[0]} {plan.root_cause}</div>
+                                    <div className="log-entry" style={{ marginTop: '10px', opacity: 0.8 }}>Impacted Files:</div>
+                                    {plan.involved_files?.map(f => (
+                                        <div key={f} className="log-entry" style={{ paddingLeft: '10px' }}>- {f}</div>
+                                    ))}
+                                    <div className="log-entry" style={{ marginTop: '10px', color: '#cca700' }}>Analysis: {plan.reason}</div>
+                                </>
+                            ) : (
+                                <div className="log-entry" style={{ color: '#6a9955' }}>// No active problems detected. System running optimally.</div>
+                            )
                         ) : (
-                            <div className="log-entry" style={{ color: '#6a9955' }}>// No active problems detected. System running optimally.</div>
+                            // View 2: Code Viewer for specific file
+                            <>
+                                <div className="log-entry" style={{ color: '#858585' }}>// Viewing {activeTab} (Snapshot at failure)</div>
+                                <div className="log-entry error">
+                                    {plan?.code_snippet || "// Stack trace unavailable"}
+                                </div>
+                            </>
                         )}
                     </div>
                 </div>
@@ -249,32 +331,40 @@ export default function Dashboard() {
                     <div className="tab-header">
                         <div className="tab active">
                             <img src="https://raw.githubusercontent.com/vscode-icons/vscode-icons/master/icons/file-type-python.svg" className="tab-icon" alt="" />
-                            Fix.py (Proposed Plan)
+                            Fix.py (Generated)
                             <span className="tab-close">×</span>
+                        </div>
+                        <div className="tab success" style={{ background: '#1e3a1e' }}>
+                            🛡️ AST Verified
                         </div>
                     </div>
                     <div className="editor-content fix-plan">
                         {plan ? (
                             <>
-                                <div><span className="python-keyword">def</span> <span className="python-function">remediate_issue</span>():</div>
-                                <div style={{ paddingLeft: '20px' }}>
-                                    <span className="python-string">"""</span><br />
-                                    <span className="python-string">Plan ID: {plan.id}</span><br />
-                                    <span className="python-string">Reason: {plan.reason}</span><br />
-                                    <span className="python-string">"""</span>
-                                </div>
-                                <div style={{ paddingLeft: '20px', marginTop: '10px' }}>
-                                    <span className="python-comment"># Execute method: {plan.action} on {plan.target}</span>
-                                </div>
-                                <div style={{ paddingLeft: '20px' }}>
-                                    target = <span className="python-string">"{plan.target}"</span>
-                                </div>
-                                <div style={{ paddingLeft: '20px' }}>
-                                    action = <span className="python-string">"{plan.action}"</span>
-                                </div>
-                                <div style={{ paddingLeft: '20px', marginTop: '10px' }}>
-                                    <span className="python-keyword">return</span> system.execute(target, action)
-                                </div>
+                                {plan.python_script ? (
+                                    <>
+                                        <div className="log-entry" style={{ color: '#6a9955', marginBottom: '10px' }}>
+                                            # AUTONOMOUSLY GENERATED FIX<br />
+                                            # Status: SAFE (Verified by Guardrails)
+                                        </div>
+                                        <pre style={{ margin: 0, fontFamily: 'monospace', color: '#d4d4d4' }}>
+                                            {plan.python_script}
+                                        </pre>
+                                    </>
+                                ) : (
+                                    // Fallback for legacy plans
+                                    <>
+                                        <div><span className="python-keyword">def</span> <span className="python-function">remediate_issue</span>():</div>
+                                        <div style={{ paddingLeft: '20px' }}>
+                                            <span className="python-string">"""</span><br />
+                                            <span className="python-string">Reason: {plan.reason}</span><br />
+                                            <span className="python-string">"""</span>
+                                        </div>
+                                        <div style={{ paddingLeft: '20px', marginTop: '10px' }}>
+                                            <span className="python-keyword">return</span> system.execute("{plan.target}", "{plan.action}")
+                                        </div>
+                                    </>
+                                )}
 
                                 <div className="action-bar">
                                     <button className="btn-vscode" onClick={approvePlan} disabled={isProcessing}>
@@ -319,6 +409,18 @@ export default function Dashboard() {
                 </div>
 
             </div>
+
+            {/* Notification Toast */}
+            {notification && (
+                <div className={`notification-toast ${notification.type}`}>
+                    <div className="notification-icon">
+                        {notification.type === 'success' && '✓'}
+                        {notification.type === 'error' && '✕'}
+                        {notification.type === 'info' && 'ℹ'}
+                    </div>
+                    <div className="notification-message">{notification.message}</div>
+                </div>
+            )}
         </div>
     )
 }

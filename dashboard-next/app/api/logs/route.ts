@@ -69,7 +69,7 @@ export async function GET() {
             }
         })
 
-        return NextResponse.json({ logs: parsedLogs.reverse() }) // Newest first
+        return NextResponse.json({ logs: parsedLogs }) // Oldest first (standard terminal flow)
     } catch (error) {
         console.error('Error reading logs:', error)
         return NextResponse.json({ logs: [] }, { status: 500 })

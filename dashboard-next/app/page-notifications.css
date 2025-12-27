@@ -1,4 +1,71 @@
-@import './globals.css';
+/* Previous styles remain... */
+
+/* Notification Toast */
+.notification-toast {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    background: #1e1e1e;
+    border-left: 4px solid;
+    padding: 16px 20px;
+    border-radius: 4px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-width: 300px;
+    max-width: 500px;
+    z-index: 10000;
+    animation: slideIn 0.3s ease-out;
+}
+
+@keyframes slideIn {
+    from {
+        transform: translateX(400px);
+        opacity: 0;
+    }
+
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
+}
+
+.notification-toast.success {
+    border-left-color: #4ec9b0;
+}
+
+.notification-toast.error {
+    border-left-color: #f48771;
+}
+
+.notification-toast.info {
+    border-left-color: #569cd6;
+}
+
+.notification-icon {
+    font-size: 20px;
+    font-weight: bold;
+    flex-shrink: 0;
+}
+
+.notification-toast.success .notification-icon {
+    color: #4ec9b0;
+}
+
+.notification-toast.error .notification-icon {
+    color: #f48771;
+}
+
+.notification-toast.info .notification-icon {
+    color: #569cd6;
+}
+
+.notification-message {
+    color: #cccccc;
+    font-size: 14px;
+    line-height: 1.5;
+}@import './globals.css';
 
 :root {
     --vscode-bg: #1e1e1e;
@@ -350,68 +417,4 @@ body {
 
 ::-webkit-scrollbar-thumb:hover {
     background: #4f4f4f;
-}/* Notification Toast */
-.notification-toast {
-    position: fixed;
-    top: 20px;
-    right: 20px;
-    background: #1e1e1e;
-    border-left: 4px solid;
-    padding: 16px 20px;
-    border-radius: 4px;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    min-width: 300px;
-    max-width: 500px;
-    z-index: 10000;
-    animation: slideIn 0.3s ease-out;
-}
-
-@keyframes slideIn {
-    from {
-        transform: translateX(400px);
-        opacity: 0;
-    }
-    to {
-        transform: translateX(0);
-        opacity: 1;
-    }
-}
-
-.notification-toast.success {
-    border-left-color: #4ec9b0;
-}
-
-.notification-toast.error {
-    border-left-color: #f48771;
-}
-
-.notification-toast.info {
-    border-left-color: #569cd6;
-}
-
-.notification-icon {
-    font-size: 20px;
-    font-weight: bold;
-    flex-shrink: 0;
-}
-
-.notification-toast.success .notification-icon {
-    color: #4ec9b0;
-}
-
-.notification-toast.error .notification-icon {
-    color: #f48771;
-}
-
-.notification-toast.info .notification-icon {
-    color: #569cd6;
-}
-
-.notification-message {
-    color: #cccccc;
-    font-size: 14px;
-    line-height: 1.5;
 }

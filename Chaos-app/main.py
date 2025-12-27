@@ -26,6 +26,9 @@ app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
 # Global state variables
 BROKEN_MODE = False
+MEMORY_LEAK_MODE = False
+LATENCY_MODE = False
+CASCADE_MODE = False
 ALERT_SENT = False  # Track if alert was already sent for this incident
 
 # Configure logging to write to both file and stdout
@@ -75,17 +78,93 @@ async def health_check():
     return {"status": "running"}
 
 
+# --- SIMULATED INTERNAL MODULES FOR CASCADE FAILURE ---
+def db_query():
+    """Simulates a database query"""
+    # This is the bottom of the stack trace
+    raise ConnectionError("Connection refused to Primary DB")
+
+def service_layer_process():
+    """Simulates business logic layer"""
+    # Calls the DB layer
+    try:
+        db_query()
+    except Exception as e:
+        raise RuntimeError(f"Service layer failed to process transaction: {e}")
+
+def main_controller_action():
+    """Simulates the main controller"""
+    # Calls the service layer
+    service_layer_process()
+# --------------------------------------------------------
+
+
 @app.get("/buy")
 async def buy_endpoint():
     """
     Payment endpoint that simulates database connectivity issues when BROKEN_MODE is True
     """
-    global BROKEN_MODE, ALERT_SENT
+    global BROKEN_MODE, MEMORY_LEAK_MODE, LATENCY_MODE, CASCADE_MODE, ALERT_SENT
     
-    if not BROKEN_MODE:
-        logger.info("Payment processed successfully")
-        return {"status": "payment_success", "latency": "10ms"}
-    else:
+    # 1. LATENCY CHECK
+    if LATENCY_MODE:
+        import time
+        logger.warning("High latency detected in payment gateway...")
+        # Flush immediately
+        for handler in logger.handlers:
+            handler.flush()
+        
+        # Determine if we should alert yet
+        if not ALERT_SENT:
+            ALERT_SENT = True
+            logger.error("TIMEOUT: Payment gateway response time exceeded 5000ms")
+            # Auto-alert logic could be reused here or simpler:
+            await send_alert("Latency Spike", "critical", "TIMEOUT: Payment gateway response time exceeded 5000ms")
+            
+        time.sleep(5) # Artificial delay
+        return {"status": "payment_success", "latency": "5002ms", "note": "High Latency"}
+
+    # 2. MEMORY LEAK CHECK
+    if MEMORY_LEAK_MODE:
+        logger.warning("Memory usage at 92%... 95%... 98%...")
+        for handler in logger.handlers:
+            handler.flush()
+            
+        if not ALERT_SENT:
+            ALERT_SENT = True
+            error_msg = "MemoryError: Out of memory. Killed process 1337."
+            logger.critical(error_msg)
+            await send_alert("Memory Exhaustion", "critical", error_msg)
+            
+        raise HTTPException(status_code=500, detail="Internal Server Error: MemoryLimitExceeded")
+
+    # 3. CASCADE FAILURE CHECK
+    if CASCADE_MODE:
+        try:
+            main_controller_action()
+        except Exception as e:
+            # We want to log the FULL stack trace to show multi-file context
+            import traceback
+            error_msg = f"Cascade Failure: {str(e)}"
+            
+            # Log the full traceback which mentions main.py, service.py (simulated), etc.
+            # In a real app these would be real files. 
+            # checks: we are in main.py, so stack trace will show main.py. 
+            # To illustrate multi-file better, we might need actual separate files, 
+            # but for now we simulate function calls in this file which is valid stack trace too.
+            # "File 'main.py', line X in service_layer_process" is what we'll get.
+            
+            tb_str = "".join(traceback.format_exc())
+            logger.error(f"Transaction Failed.\n{tb_str}")
+            
+            if not ALERT_SENT:
+                ALERT_SENT = True
+                await send_alert("Cascade System Failure", "critical", error_msg)
+                
+            raise HTTPException(status_code=500, detail="Internal Server Error: CascadeFailure")
+
+    # 4. STANDARD BROKEN MODE (DB Connection)
+    if BROKEN_MODE:
         # Log the exact error message and flush immediately
         error_msg = "ConnectionRefusedError: Unable to connect to database at 192.168.1.55"
         logger.error(error_msg)
@@ -98,62 +177,116 @@ async def buy_endpoint():
         for handler in logger.handlers:
             handler.flush()
             
-        # AUTO-ALERT: Notify the agent immediately (but only once per incident)
+        # AUTO-ALERT
         if not ALERT_SENT:
-            ALERT_SENT = True  # Mark as sent immediately to prevent retries
-            try:
-                # URL for agent inside Docker network
-                agent_url = "http://codeweaver-agent:8001/webhook/alert"
-                payload = {
-                    "data": {
-                        "source": "chaos-app",
-                        "severity": "critical",
-                        "message": error_msg,
-                        "timestamp": datetime.now().isoformat(),
-                        "log_path": "/logs/service.log"
-                    }
-                }
-                # Use short timeout so we don't block the user response too long
-                requests.post(agent_url, json=payload, timeout=0.5)
-                logger.info("Sent automatic alert to SRE Agent")
-            except Exception as e:
-                # Don't crash if agent is down, just log it
-                logger.error(f"Failed to auto-alert agent: {str(e)}")
+            ALERT_SENT = True
+            await send_alert("Database Connection Failed", "critical", error_msg)
         
         # Raise HTTP 500 error
         raise HTTPException(status_code=500, detail="Internal Server Error")
+        
+    logger.info("Payment processed successfully")
+    return {"status": "payment_success", "latency": "10ms"}
+
+
+async def send_alert(title, severity, message):
+    """Helper to send webhook to agent"""
+    try:
+        # URL for agent inside Docker network
+        agent_url = "http://codeweaver-agent:8001/webhook/alert"
+        payload = {
+            "data": {
+                "source": "chaos-app",
+                "severity": severity,
+                "message": message,
+                "timestamp": datetime.now().isoformat(),
+                "log_path": "/logs/service.log"
+            }
+        }
+        # Use longer timeout (LLM processing can take time)
+        # However, we prefer fire-and-forget or async processing on the agent side 
+        # But here we just need to ensure the request is sent.
+        requests.post(agent_url, json=payload, timeout=5.0)
+        logger.info(f"Sent automatic alert to SRE Agent: {title}")
+    except Exception as e:
+        logger.error(f"Failed to auto-alert agent: {str(e)}")
+        # CRITICAL FIX: If alert fails, allow retry!
+        # Otherwise the system stays broken but silent forever.
+        global ALERT_SENT
+        ALERT_SENT = False
 
 
 @app.post("/chaos/trigger")
 async def trigger_chaos():
-    """
-    Trigger chaos mode - makes the service start failing
-    """
-    global BROKEN_MODE, ALERT_SENT
+    """Trigger standard broken mode"""
+    global BROKEN_MODE, ALERT_SENT, MEMORY_LEAK_MODE, LATENCY_MODE, CASCADE_MODE
     BROKEN_MODE = True
-    ALERT_SENT = False  # Reset alert flag for new incident
-    logger.warning("CHAOS MODE ACTIVATED - Service will now fail")
-    return {"status": "chaos_started"}
+    MEMORY_LEAK_MODE = False
+    LATENCY_MODE = False
+    CASCADE_MODE = False
+    ALERT_SENT = False
+    logger.warning("CHAOS MODE ACTIVATED - DB Connection will fail")
+    return {"status": "chaos_started", "mode": "broken_db"}
 
+@app.post("/chaos/trigger/memory")
+async def trigger_memory():
+    """Trigger memory leak mode"""
+    global BROKEN_MODE, ALERT_SENT, MEMORY_LEAK_MODE, LATENCY_MODE, CASCADE_MODE
+    MEMORY_LEAK_MODE = True
+    BROKEN_MODE = False
+    LATENCY_MODE = False
+    CASCADE_MODE = False
+    ALERT_SENT = False
+    logger.warning("CHAOS MODE ACTIVATED - Memory Leaking...")
+    return {"status": "chaos_started", "mode": "memory_leak"}
+
+@app.post("/chaos/trigger/latency")
+async def trigger_latency():
+    """Trigger latency mode"""
+    global BROKEN_MODE, ALERT_SENT, MEMORY_LEAK_MODE, LATENCY_MODE, CASCADE_MODE
+    LATENCY_MODE = True
+    BROKEN_MODE = False
+    MEMORY_LEAK_MODE = False
+    CASCADE_MODE = False
+    ALERT_SENT = False
+    logger.warning("CHAOS MODE ACTIVATED - Latency increasing...")
+    return {"status": "chaos_started", "mode": "latency"}
+
+@app.post("/chaos/trigger/cascade")
+async def trigger_cascade():
+    """Trigger cascade failure mode"""
+    global BROKEN_MODE, ALERT_SENT, MEMORY_LEAK_MODE, LATENCY_MODE, CASCADE_MODE
+    CASCADE_MODE = True
+    BROKEN_MODE = False
+    MEMORY_LEAK_MODE = False
+    LATENCY_MODE = False
+    ALERT_SENT = False
+    logger.warning("CHAOS MODE ACTIVATED - Cascade Failure imminent")
+    return {"status": "chaos_started", "mode": "cascade"}
 
 @app.post("/chaos/resolve")
 async def resolve_chaos():
-    """
-    Resolve chaos mode - restores service to healthy state
-    """
-    global BROKEN_MODE, ALERT_SENT
+    """Resolve all chaos modes"""
+    global BROKEN_MODE, ALERT_SENT, MEMORY_LEAK_MODE, LATENCY_MODE, CASCADE_MODE
     BROKEN_MODE = False
-    ALERT_SENT = False  # Reset alert flag
-    logger.info("CHAOS MODE RESOLVED - Service restored to healthy state")
+    MEMORY_LEAK_MODE = False
+    LATENCY_MODE = False
+    CASCADE_MODE = False
+    ALERT_SENT = False
+    logger.info("CHAOS MODE RESOLVED - System restored")
     return {"status": "recovered"}
 
 
 @app.get("/status")
 async def get_status():
-    """
-    Get current service status
-    """
+    """Get current service status"""
+    mode = "healthy"
+    if BROKEN_MODE: mode = "broken_db"
+    elif MEMORY_LEAK_MODE: mode = "memory_leak"
+    elif LATENCY_MODE: mode = "latency"
+    elif CASCADE_MODE: mode = "cascade"
+    
     return {
-        "broken_mode": BROKEN_MODE,
-        "status": "degraded" if BROKEN_MODE else "healthy"
+        "status": "degraded" if mode != "healthy" else "healthy",
+        "mode": mode
     }
