@@ -49,32 +49,25 @@ class Diagnoser:
             "If no error is found, set confidence to 0.0 and use 'Unknown' for missing fields."
         )
     
-    def analyze_logs(self, log_path: str) -> dict:
+    def analyze_logs(self, log_content: str) -> dict:
         """
-        Analyze logs from a file and identify potential issues.
+        Analyze log content and identify potential issues.
         
         Args:
-            log_path: Path to the log file to analyze
+            log_content: The actual log content as a string (not a file path)
             
         Returns:
             Dictionary with diagnosis results
         """
-        # Read the last 50 lines from the log file
-        try:
-            with open(log_path, 'r') as f:
-                lines = f.readlines()
-                last_50_lines = lines[-50:] if len(lines) > 50 else lines
-                log_content = ''.join(last_50_lines)
-        except FileNotFoundError:
+        # Validate log content
+        if not log_content or not log_content.strip():
+            logger.warning("[DIAGNOSER] No log content provided")
             return {
-                "root_cause": f"Log file not found at {log_path}",
+                "root_cause": "No log content provided",
                 "confidence": 0.0
             }
-        except Exception as e:
-            return {
-                "root_cause": f"Error reading log file: {str(e)}",
-                "confidence": 0.0
-            }
+        
+        logger.info(f"[DIAGNOSER] Analyzing {len(log_content)} characters of log data...")
         
         # Create messages for the LLM
         messages = [
@@ -93,7 +86,7 @@ class Diagnoser:
             root_cause = result.get('root_cause', 'unknown')
             confidence = result.get('confidence', 0.0)
             involved = result.get('involved_files', [])
-            logger.info(f"[DIAGNOSER] ❌ Root Cause Found: {root_cause} (Files: {involved})")
+            logger.info(f"[DIAGNOSER] ❌ Root Cause Found: {root_cause} (Confidence: {confidence:.2f}, Files: {involved})")
             
             return result
             

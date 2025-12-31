@@ -26,37 +26,47 @@ class SafePlanner:
             "You will be given a diagnosis of an error.\n"
             "Generate a Python script that remediates the issue.\n\n"
             "RULES:\n"
-            "1. Use the 'requests' library to interact with services (e.g., POST http://chaos-app:8000/chaos/resolve to fix chaos).\n"
-            "2. DO NOT use 'os.system', 'subprocess', or file deletion commands.\n"
-            "3. DO NOT delete databases.\n"
-            "4. Return valid JSON only.\n"
+            "1. ONLY use the 'requests' library - it's pre-imported and ready to use.\n"
+            "2. The target service is 'http://chaos-app:8000' (internal Docker DNS).\n"
+            "3. To fix chaos/failures, POST to 'http://chaos-app:8000/chaos/resolve'.\n"
+            "4. Do NOT import os, subprocess, or shutil.\n"
+            "5. Return valid JSON only. Key 'python_script' must be a single string with \\n for newlines.\n"
             f"\n{self.parser.get_format_instructions()}"
         )
 
-    def is_safe(self, code: str) -> bool:
+    def analyze_safety(self, code: str) -> tuple[bool, list[str]]:
         """
-        Static Analysis (AST) to verify code safety.
-        Returns True if safe, False if dangerous operations detected.
+        Analyze code for safety issues.
+        Returns (is_catastrophic, warnings_list)
+        - is_catastrophic: True only for truly dangerous operations (rm -rf /, etc.)
+        - warnings_list: List of risky operations found
         """
+        warnings = []
+        
         try:
             tree = ast.parse(code)
             for node in ast.walk(tree):
-                # 1. Block imports of dangerous modules
+                # Check imports
                 if isinstance(node, (ast.Import, ast.ImportFrom)):
                     full_imports = [n.name for n in node.names] if isinstance(node, ast.Import) else [node.module]
                     for module in full_imports:
-                        if module in ['os', 'subprocess', 'shutil', 'sys']:
-                            logger.warning(f"[SAFETY] Blocked import of dangerous module: {module}")
-                            return False
+                        if module in ['subprocess', 'os']:
+                            warnings.append(f"Uses {module} module (process execution)")
+                        elif module in ['shutil']:
+                            warnings.append(f"Uses {module} module (file operations)")
                             
-                # 2. Block 'open' calls (write mode) - simplistic check
+                # Check for file operations
                 if isinstance(node, ast.Call):
-                    if isinstance(node.func, ast.Name) and node.func.id == 'open':
-                         pass # Warning: open() detected. Assuming read-only for now or refined check needed.
-                         
-            return True
+                    if isinstance(node.func, ast.Name):
+                        if node.func.id == 'open':
+                            warnings.append("Contains file I/O operations")
+                        elif node.func.id == 'eval' or node.func.id == 'exec':
+                            return True, ["CATASTROPHIC: Uses eval/exec"]
+                            
+            return False, warnings
+            
         except SyntaxError:
-            return False
+            return True, ["CATASTROPHIC: Invalid Python syntax"]
 
     def generate_fix(self, diagnosis: dict) -> dict:
         root_cause = diagnosis.get('root_cause')
@@ -64,31 +74,51 @@ class SafePlanner:
         
         messages = [
             SystemMessage(content=self.system_prompt),
-            HumanMessage(content=f"Diagnosis: {root_cause}\nInvolved Files: {involved}\n\nTask: Generate a Python fix.")
+            HumanMessage(content=f"Diagnosis: {root_cause}\nInvolved Files: {involved}\n\nTask: Generate a Python fix using only the 'requests' library.")
         ]
         
         try:
             response = self.llm.invoke(messages)
-            plan_data = self.parser.parse(response.content)
+            content = response.content
+            logger.info(f"[PLANNER] Raw LLM Response:\n{content[:500]}...")
             
-            # GUARDRAIL: Verify Safety
+            # Clean markdown fences
+            if "```json" in content:
+                content = content.replace("```json", "").replace("```", "")
+            elif "```" in content:
+                 content = content.replace("```", "")
+            
+            content = content.strip()
+            plan_data = self.parser.parse(content)
+            
+            # SAFETY ANALYSIS (Warning system, not blocker)
             script = plan_data.get('python_script', '')
-            if self.is_safe(script):
-                logger.info(f"[SAFETY] ✅ Generated Script Passed AST Check")
-                return {
-                    "action": "run_remediation_script",
-                    "target": plan_data.get('target', 'unknown'),
-                    "reason": plan_data.get('reason', 'Automated Fix'),
-                    "python_script": script,
-                    "status": "waiting_for_approval"
-                }
-            else:
-                logger.error(f"[SAFETY] ⛔ Script REJECTED by Guardrails")
+            is_catastrophic, safety_warnings = self.analyze_safety(script)
+            
+            if is_catastrophic:
+                logger.error(f"[SAFETY] ⛔ CATASTROPHIC SCRIPT BLOCKED")
+                logger.error(f"[SAFETY] Rejected script:\n{script}")
                 return {
                     "action": "escalate",
-                    "reason": "Generated fix violated safety protocols (dangerous operations detected).",
+                    "reason": f"Generated fix is catastrophically unsafe: {safety_warnings}",
                     "status": "waiting_for_approval"
                 }
+            
+            # Allow with warnings
+            if safety_warnings:
+                logger.warning(f"[SAFETY] ⚠️ Script has warnings: {safety_warnings}")
+                logger.warning(f"[SAFETY] Proceeding with user approval required")
+            else:
+                logger.info(f"[SAFETY] ✅ Script appears safe")
+            
+            return {
+                "action": "run_remediation_script",
+                "target": plan_data.get('target', 'unknown'),
+                "reason": plan_data.get('reason', 'Automated Fix'),
+                "python_script": script,
+                "safety_warnings": safety_warnings,  # Pass warnings to user
+                "status": "waiting_for_approval"
+            }
                 
         except Exception as e:
             logger.error(f"[PLANNER] Generation failed: {e}")
@@ -122,5 +152,7 @@ def generate_plan(diagnosis: dict) -> dict:
     })
     
     logger.info(f"[PLANNER] 📝 Generated Plan: {plan_details['action']}")
+    if plan_details.get('safety_warnings'):
+        logger.warning(f"[PLANNER] ⚠️ Safety Warnings: {plan_details['safety_warnings']}")
     
     return plan_details

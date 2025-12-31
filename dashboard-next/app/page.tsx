@@ -312,7 +312,15 @@ export default function Dashboard() {
                                     <div className="log-entry" style={{ marginTop: '10px', color: '#cca700' }}>Analysis: {plan.reason}</div>
                                 </>
                             ) : (
-                                <div className="log-entry" style={{ color: '#6a9955' }}>// No active problems detected. System running optimally.</div>
+                                systemStatus === 'CRITICAL' || systemStatus === 'DEGRADED' ? (
+                                    <>
+                                        <div className="log-entry error">[CRITICAL] System outages detected.</div>
+                                        <div className="log-entry" style={{ color: '#cca700' }}>// Agent is analyzing telemetry...</div>
+                                        <div className="log-entry" style={{ color: '#858585', marginTop: '5px' }}>// Waiting for remediation plan generation</div>
+                                    </>
+                                ) : (
+                                    <div className="log-entry" style={{ color: '#6a9955' }}>// No active problems detected. System running optimally.</div>
+                                )
                             )
                         ) : (
                             // View 2: Code Viewer for specific file
