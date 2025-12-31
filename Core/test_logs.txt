@@ -1,4 +1,0 @@
-[INFO] 2024-05-20 10:00:01 Starting service...
-[INFO] 2024-05-20 10:00:02 DB Connection established.
-[ERROR] 2024-05-20 10:05:00 ConnectionRefusedError: Unable to connect to database at 192.168.1.55
-[CRITICAL] 2024-05-20 10:05:01 Service creates 500 error on endpoint /buy

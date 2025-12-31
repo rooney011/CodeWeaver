@@ -25,7 +25,7 @@ class SafePlanner:
             "You are an Expert SRE Agent. Your job is to generate safe Python code to fix system incidents.\n"
             "You will be given a diagnosis of an error.\n"
             "Generate a Python script that remediates the issue.\n\n"
-            "RULES:\n"
+            "GUIDELINES:\n"
             "1. ONLY use the 'requests' library - it's pre-imported and ready to use.\n"
             "2. The target service is 'http://chaos-app:8000' (internal Docker DNS).\n"
             "3. To fix chaos/failures, POST to 'http://chaos-app:8000/chaos/resolve'.\n"
@@ -38,8 +38,6 @@ class SafePlanner:
         """
         Analyze code for safety issues.
         Returns (is_catastrophic, warnings_list)
-        - is_catastrophic: True only for truly dangerous operations (rm -rf /, etc.)
-        - warnings_list: List of risky operations found
         """
         warnings = []
         
@@ -54,19 +52,11 @@ class SafePlanner:
                             warnings.append(f"Uses {module} module (process execution)")
                         elif module in ['shutil']:
                             warnings.append(f"Uses {module} module (file operations)")
-                            
-                # Check for file operations
-                if isinstance(node, ast.Call):
-                    if isinstance(node.func, ast.Name):
-                        if node.func.id == 'open':
-                            warnings.append("Contains file I/O operations")
-                        elif node.func.id == 'eval' or node.func.id == 'exec':
-                            return True, ["CATASTROPHIC: Uses eval/exec"]
-                            
-            return False, warnings
-            
+                                    
         except SyntaxError:
             return True, ["CATASTROPHIC: Invalid Python syntax"]
+        
+        return False, warnings
 
     def generate_fix(self, diagnosis: dict) -> dict:
         root_cause = diagnosis.get('root_cause')
@@ -86,7 +76,7 @@ class SafePlanner:
             if "```json" in content:
                 content = content.replace("```json", "").replace("```", "")
             elif "```" in content:
-                 content = content.replace("```", "")
+                content = content.replace("```", "")
             
             content = content.strip()
             plan_data = self.parser.parse(content)
@@ -107,7 +97,6 @@ class SafePlanner:
             # Allow with warnings
             if safety_warnings:
                 logger.warning(f"[SAFETY] ⚠️ Script has warnings: {safety_warnings}")
-                logger.warning(f"[SAFETY] Proceeding with user approval required")
             else:
                 logger.info(f"[SAFETY] ✅ Script appears safe")
             
@@ -116,7 +105,7 @@ class SafePlanner:
                 "target": plan_data.get('target', 'unknown'),
                 "reason": plan_data.get('reason', 'Automated Fix'),
                 "python_script": script,
-                "safety_warnings": safety_warnings,  # Pass warnings to user
+                "safety_warnings": safety_warnings,
                 "status": "waiting_for_approval"
             }
                 

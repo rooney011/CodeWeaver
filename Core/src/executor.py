@@ -19,31 +19,16 @@ async def execute_plan(plan: dict) -> dict:
             import requests
             
             # Create a restricted environment for execution
-            # Track HTTP calls made by the script
-            http_calls_made = []
+            import io
+            import sys
             
-            def tracked_requests_post(*args, **kwargs):
-                """Wrapper around requests.post to track calls"""
-                logger.info(f"[EXECUTOR] Making POST request to: {args[0] if args else kwargs.get('url', 'unknown')}")
-                response = requests.post(*args, **kwargs)
-                http_calls_made.append({
-                    'url': args[0] if args else kwargs.get('url'),
-                    'status': response.status_code,
-                    'response': response.text[:200]  # First 200 chars
-                })
-                logger.info(f"[EXECUTOR] Response: {response.status_code} - {response.text[:100]}")
-                return response
-            
-            # Monkey-patch requests module for tracking
-            mock_requests = type('requests', (), {
-                'post': tracked_requests_post,
-                'get': requests.get,
-                'RequestException': requests.RequestException
-            })()
+            # Capture stdout/stderr
+            capture_io = io.StringIO()
             
             safe_globals = {
-                "requests": mock_requests,
+                "requests": requests,
                 "httpx": httpx,
+                "print": lambda *args, **kwargs: print(*args, file=capture_io, **kwargs),
                 "logger": logger
             }
             
@@ -52,18 +37,14 @@ async def execute_plan(plan: dict) -> dict:
             # Execute
             exec(script, safe_globals)
             
-            # Log results
-            if http_calls_made:
-                logger.info(f"[EXECUTOR] HTTP calls made: {len(http_calls_made)}")
-                for call in http_calls_made:
-                    logger.info(f"  - {call['url']}: {call['status']}")
-            else:
-                logger.warning("[EXECUTOR] Script completed but made no HTTP calls!")
+            # Get output
+            output = capture_io.getvalue()
+            logger.info(f"[EXECUTOR] Script Output:\n{output if output else '(no output)'}")
             
             return {
                 'status': 'success',
                 'details': 'Autonomous script executed successfully',
-                'http_calls': http_calls_made
+                'output': output
             }
             
         except Exception as e:
@@ -74,18 +55,12 @@ async def execute_plan(plan: dict) -> dict:
                 'details': f'Script crashed: {str(e)}'
             }
             
-            
-    elif action == 'restart_service':
-        # Legacy fallback support
-        target = plan.get('target', 'unknown')
-        try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.post("http://chaos-app:8000/chaos/resolve")
-                if response.status_code == 200:
-                    return {'status': 'success', 'details': 'Service restarted successfully'}
-                return {'status': 'error', 'details': f'Restart failed with status {response.status_code}'}
-        except Exception as e:
-            return {'status': 'error', 'details': str(e)}
+    elif action == 'escalate':
+        logger.info("[EXECUTOR] Plan escalated to human - no automated fix available")
+        return {
+            'status': 'escalated',
+            'details': plan.get('reason', 'No automated remediation possible')
+        }
     
     return {
         'status': 'skipped',

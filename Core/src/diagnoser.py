@@ -3,9 +3,8 @@ from langchain_groq import ChatGroq
 from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_core.output_parsers import JsonOutputParser
 from typing import List
-
-
 import logging
+import os
 
 # Configure logger
 logger = logging.getLogger("codeweaver-agent")
@@ -23,7 +22,7 @@ class DiagnosisResult(BaseModel):
 class Diagnoser:
     """SRE Log Analyzer using Groq LLM for fast inference"""
     
-    def __init__(self):
+    def __init__(self, project_path: str = None):
         """Initialize the Groq model and output parser"""
         self.llm = ChatGroq(
             model_name="llama-3.1-8b-instant",
@@ -32,6 +31,9 @@ class Diagnoser:
         
         # Set up the JSON output parser with our schema
         self.parser = JsonOutputParser(pydantic_object=DiagnosisResult)
+        
+        # Initialize code analyzer
+        self.project_path = project_path or os.getenv("PROJECT_PATH", "/workspace")
         
         # Build system prompt with format instructions
         format_instructions = self.parser.get_format_instructions()
@@ -48,6 +50,48 @@ class Diagnoser:
             "- code_snippet: The specific line of code or stack trace snippet if visible\n"
             "If no error is found, set confidence to 0.0 and use 'Unknown' for missing fields."
         )
+    
+    def get_source_code_context(self, file_name: str, line_number: str) -> str:
+        """
+        Attempt to fetch source code context for better analysis.
+        
+        Args:
+            file_name: Name of the file (e.g., "main.py")
+            line_number: Line number as string (e.g., "127")
+            
+        Returns:
+            Source code context or empty string if unavailable
+        """
+        try:
+            if file_name == "Unknown" or line_number == "Unknown":
+                return ""
+            
+            # Try to convert line number to int
+            try:
+                line_num = int(line_number)
+            except ValueError:
+                return ""
+            
+            # Read file from workspace
+            file_path = os.path.join(self.project_path, file_name)
+            if not os.path.exists(file_path):
+                logger.warning(f"[DIAGNOSER] Source file not found: {file_path}")
+                return ""
+            
+            with open(file_path, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+            
+            # Get ±10 lines around the error
+            start= max(0, line_num - 11)
+            end_line = min(len(lines), line_num + 10)
+            context = ''.join(lines[start_line:end_line])
+            
+            logger.info(f"[DIAGNOSER] Fetched source context from {file_name}:{line_number}")
+            return f"\n\n--- Source Code Context ({file_name} lines {start_line+1}-{end_line}) ---\n{context}"
+            
+        except Exception as e:
+            logger.error(f"[DIAGNOSER] Error fetching source context: {e}")
+            return ""
     
     def analyze_logs(self, log_content: str) -> dict:
         """
@@ -81,6 +125,15 @@ class Diagnoser:
             
             # Parse the JSON response using the output parser
             result = self.parser.parse(response.content)
+            
+            # Try to enhance with source code context
+            file_name = result.get('file_name', 'Unknown')
+            line_number = result.get('line_number', 'Unknown')
+            
+            if file_name != 'Unknown' and line_number != 'Unknown':
+                source_context = self.get_source_code_context(file_name, line_number)
+                if source_context:
+                    result['source_code_context'] = source_context
             
             # STORY LOGGING: Diagnoser result
             root_cause = result.get('root_cause', 'unknown')

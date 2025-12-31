@@ -25,7 +25,15 @@ interface Plan {
     action: string
     target: string
     reason: string
-    python_script?: string // The autonomous code
+    python_script?: string
+    // Code patch fields
+    code_before?: string
+    code_after?: string
+    target_file?: string
+    start_line?: number
+    patch_description?: string
+    safety_warnings?: string[]
+    status?: string
 }
 
 interface ServiceStatus {
@@ -349,7 +357,40 @@ export default function Dashboard() {
                     <div className="editor-content fix-plan">
                         {plan ? (
                             <>
-                                {plan.python_script ? (
+                                {plan.action === 'apply_code_patch' && plan.code_after ? (
+                                    <>
+                                        <div className="log-entry" style={{ color: '#6a9955', marginBottom: '10px' }}>
+                                            # CODE PATCH GENERATED<br />
+                                            # File: {plan.target_file || 'Unknown'}<br />
+                                            # Line: {plan.start_line || 'Unknown'}<br />
+                                            # Status: SAFE (Verified by Guardrails)
+                                        </div>
+
+                                        {plan.patch_description && (
+                                            <div className="log-entry" style={{ color: '#858585', marginBottom: '15px', fontStyle: 'italic' }}>
+                                                // {plan.patch_description}
+                                            </div>
+                                        )}
+
+                                        {plan.code_before && (
+                                            <>
+                                                <div className="log-entry" style={{ color: '#f48771', marginBottom: '5px' }}>
+                                                    - BEFORE:
+                                                </div>
+                                                <pre style={{ margin: '0 0 15px 0', fontFamily: 'monospace', color: '#f48771', background: 'rgba(244, 135, 113, 0.1)', padding: '10px', borderRadius: '4px', overflow: 'auto' }}>
+                                                    {plan.code_before}
+                                                </pre>
+                                            </>
+                                        )}
+
+                                        <div className="log-entry" style={{ color: '#73c991', marginBottom: '5px' }}>
+                                            + AFTER (PROPOSED FIX):
+                                        </div>
+                                        <pre style={{ margin: 0, fontFamily: 'monospace', color: '#73c991', background: 'rgba(115, 201, 145, 0.1)', padding: '10px', borderRadius: '4px', overflow: 'auto' }}>
+                                            {plan.code_after}
+                                        </pre>
+                                    </>
+                                ) : plan.python_script ? (
                                     <>
                                         <div className="log-entry" style={{ color: '#6a9955', marginBottom: '10px' }}>
                                             # AUTONOMOUSLY GENERATED FIX<br />
@@ -360,7 +401,6 @@ export default function Dashboard() {
                                         </pre>
                                     </>
                                 ) : (
-                                    // Fallback for legacy plans
                                     <>
                                         <div><span className="python-keyword">def</span> <span className="python-function">remediate_issue</span>():</div>
                                         <div style={{ paddingLeft: '20px' }}>

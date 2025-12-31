@@ -1,4 +1,0 @@
-[INFO] 2024-05-20 10:00:01 Starting service...
-[INFO] 2024-05-20 10:00:02 All systems operational.
-[WARNING] 2024-05-20 10:05:00 Memory usage at 85%
-[INFO] 2024-05-20 10:10:00 Scheduled backup completed
