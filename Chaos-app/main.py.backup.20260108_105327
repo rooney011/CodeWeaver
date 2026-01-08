@@ -86,7 +86,7 @@ def connect_to_database():
     import socket
     # BUG: No timeout, will hang indefinitely on connection issues
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.connect(('192.168.1.55', 5432))  # Non-existent DB
+    sock.connect(('192.168.1.55', 5432), timeout=5.0); sock.settimeout(5.0)  # Non-existent DB
     return sock
 
 # BUGGY: Unbounded cache causes memory leak

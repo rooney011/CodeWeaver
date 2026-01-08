@@ -98,6 +98,9 @@ async def receive_alert(payload: AlertPayload):
         
         diagnosis = diagnoser.analyze_logs(log_content)
         
+        # Add raw log content for chaos detection
+        diagnosis['raw_logs'] = log_content
+        
         logger.info(f"[AGENT] 📊 Diagnosis Complete:")
         logger.info(f"  - Root Cause: {diagnosis.get('root_cause')}")
         logger.info(f"  - Confidence: {diagnosis.get('confidence')}")

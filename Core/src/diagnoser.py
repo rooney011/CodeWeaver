@@ -54,6 +54,8 @@ class Diagnoser:
     def get_source_code_context(self, file_name: str, line_number: str) -> str:
         """
         Attempt to fetch source code context for better analysis.
+        For small files (<500 lines), returns the ENTIRE file for accurate patching.
+        For large files, returns ±20 lines around the error.
         
         Args:
             file_name: Name of the file (e.g., "main.py")
@@ -81,13 +83,21 @@ class Diagnoser:
             with open(file_path, 'r', encoding='utf-8') as f:
                 lines = f.readlines()
             
-            # Get ±10 lines around the error
-            start= max(0, line_num - 11)
-            end_line = min(len(lines), line_num + 10)
+            total_lines = len(lines)
+            
+            # If file is small, return the ENTIRE file for accurate patching
+            if total_lines <= 500:
+                context = ''.join(lines)
+                logger.info(f"[DIAGNOSER] Fetched FULL file: {file_name} ({total_lines} lines)")
+                return f"\n\n--- FULL SOURCE CODE: {file_name} ---\n{context}\n--- END OF FILE ---\n"
+            
+            # For large files, get ±20 lines around the error
+            start_line = max(0, line_num - 21)
+            end_line = min(total_lines, line_num + 20)
             context = ''.join(lines[start_line:end_line])
             
-            logger.info(f"[DIAGNOSER] Fetched source context from {file_name}:{line_number}")
-            return f"\n\n--- Source Code Context ({file_name} lines {start_line+1}-{end_line}) ---\n{context}"
+            logger.info(f"[DIAGNOSER] Fetched source context from {file_name}:{line_number} (lines {start_line+1}-{end_line})")
+            return f"\n\n--- Source Code Context ({file_name} lines {start_line+1}-{end_line}) ---\n{context}\n--- END OF SNIPPET ---\n"
             
         except Exception as e:
             logger.error(f"[DIAGNOSER] Error fetching source context: {e}")

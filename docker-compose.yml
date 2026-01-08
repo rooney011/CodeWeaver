@@ -23,7 +23,8 @@ services:
       - "8001:8001"
     volumes:
       - shared-logs:/logs
-      - ./Chaos-app:/workspace:ro
+      - ./Chaos-app:/workspace
+      - /var/run/docker.sock:/var/run/docker.sock
     environment:
       - GROQ_API_KEY=${GROQ_API_KEY}
       - PROJECT_PATH=/workspace

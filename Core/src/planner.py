@@ -11,10 +11,12 @@ logger = logging.getLogger("codeweaver-agent")
 
 class RemediationPlan(BaseModel):
     """Model for the LLM generated remediation plan"""
-    action: str = Field(description="Short description of the action (e.g. 'restart_service', 'clear_cache')")
+    action: str = Field(description="Short description of the action (e.g. 'fix_database_connection', 'patch_memory_leak')")
     reason: str = Field(description="Explanation of why this fix was chosen")
-    target: str = Field(description="The target service or component")
-    python_script: str = Field(description="A valid, self-contained Python script to execute the fix. Must include imports.")
+    target: str = Field(description="The target file or component to patch")
+    file_path: str = Field(description="Relative path to the file that needs to be patched (e.g. 'main.py')")
+    original_code: str = Field(description="The exact buggy code section to be replaced. Must match EXACTLY.")
+    fixed_code: str = Field(description="The corrected code that will replace the buggy section")
 
 class SafePlanner:
     def __init__(self):
@@ -22,15 +24,30 @@ class SafePlanner:
         self.parser = JsonOutputParser(pydantic_object=RemediationPlan)
         
         self.system_prompt = (
-            "You are an Expert SRE Agent. Your job is to generate safe Python code to fix system incidents.\n"
-            "You will be given a diagnosis of an error.\n"
-            "Generate a Python script that remediates the issue.\n\n"
-            "GUIDELINES:\n"
-            "1. ONLY use the 'requests' library - it's pre-imported and ready to use.\n"
-            "2. The target service is 'http://chaos-app:8000' (internal Docker DNS).\n"
-            "3. To fix chaos/failures, POST to 'http://chaos-app:8000/chaos/resolve'.\n"
-            "4. Do NOT import os, subprocess, or shutil.\n"
-            "5. Return valid JSON only. Key 'python_script' must be a single string with \\n for newlines.\n"
+            "You are an Expert SRE Code Fixing Agent. Your job is to analyze errors and generate SAFE code patches.\n"
+            "You will receive:\n"
+            "1. Error logs with stack trace\n"
+            "2. The FULL source code of the buggy file\n\n"
+            "Your task: Generate a JSON patch to fix the bug.\n\n"
+            "SAFETY RULES (CRITICAL):\n"
+            "- ONLY fix the specific bug causing the error\n"
+            "- DO NOT modify database operations, credentials, or authentication logic\n"
+            "- DO NOT delete functions or classes\n"
+            "- DO NOT change API contracts or function signatures\n"
+            "- ONLY fix: connection errors, memory leaks, null checks, exception handling, timeouts\n\n"
+            "CODE PATCH FORMAT:\n"
+            "- file_path: The file to patch (e.g. 'main.py')\n"
+            "- original_code: The EXACT buggy code section (must match character-for-character)\n"
+            "- fixed_code: The corrected code that replaces it\n\n"
+            "EXAMPLES:\n\n"
+            "Example 1 - Database Connection:\n"
+            "If you see: 'ConnectionRefusedError: Unable to connect to database'\n"
+            "And code shows: db_client = DBClient(host='192.168.1.55')\n"
+            "Fix: Add retry logic or connection pooling\n\n"
+            "Example 2 - Memory Leak:\n"
+            "If you see: 'MemoryError: Out of memory'\n"
+            "And code shows: cache = {}  # unbounded\n"
+            "Fix: Add size limits or use LRU cache\n\n"
             f"\n{self.parser.get_format_instructions()}"
         )
 
@@ -61,10 +78,36 @@ class SafePlanner:
     def generate_fix(self, diagnosis: dict) -> dict:
         root_cause = diagnosis.get('root_cause')
         involved = diagnosis.get('involved_files', [])
+        source_context = diagnosis.get('source_code_context', '')
         
+        # DETECT CHAOS SCENARIO  
+        # If logs mention "CHAOS MODE" or error from chaos-app, resolve it via API
+        raw_logs = diagnosis.get('raw_logs', '')
+        root_cause_text = root_cause.lower() if root_cause else ''
+        
+        if 'CHAOS MODE' in raw_logs or 'chaos' in root_cause_text or 'CHAOS' in raw_logs:
+            logger.info("[PLANNER] 🎯 Detected chaos scenario - will resolve via API")
+            return {
+                "action": "resolve_chaos",
+                "target": "chaos-app",
+                "reason": "Detected simulated chaos test. Calling /chaos/resolve endpoint to restore system.",
+                "endpoint": "http://chaos-app:8000/chaos/resolve",
+                "safety_warnings": [],
+                "status": "waiting_for_approval"
+            }
+        
+        # Build the prompt with source code context
+        user_prompt = f"""Diagnosis: {root_cause}
+Involved Files: {involved}
+
+{source_context}
+
+Based on the error logs and source code above, generate a code patch to fix the bug.
+Remember: Extract the EXACT buggy code section and provide the corrected version."""
+
         messages = [
             SystemMessage(content=self.system_prompt),
-            HumanMessage(content=f"Diagnosis: {root_cause}\nInvolved Files: {involved}\n\nTask: Generate a Python fix using only the 'requests' library.")
+            HumanMessage(content=user_prompt)
         ]
         
         try:
@@ -79,32 +122,43 @@ class SafePlanner:
                 content = content.replace("```", "")
             
             content = content.strip()
+            
+            # Extract JSON from the response
+            json_start = content.find('{')
+            json_end = content.rfind('}')
+            
+            if json_start != -1 and json_end != -1 and json_end > json_start:
+                content = content[json_start:json_end + 1]
+                logger.info(f"[PLANNER] Extracted JSON: {content[:200]}...")
+            
             plan_data = self.parser.parse(content)
             
-            # SAFETY ANALYSIS (Warning system, not blocker)
-            script = plan_data.get('python_script', '')
-            is_catastrophic, safety_warnings = self.analyze_safety(script)
+            # SAFETY ANALYSIS for code patches
+            fixed_code = plan_data.get('fixed_code', '')
+            is_catastrophic, safety_warnings = self.analyze_safety(fixed_code)
             
             if is_catastrophic:
-                logger.error(f"[SAFETY] ⛔ CATASTROPHIC SCRIPT BLOCKED")
-                logger.error(f"[SAFETY] Rejected script:\n{script}")
+                logger.error(f"[SAFETY] ⛔ CATASTROPHIC PATCH BLOCKED")
+                logger.error(f"[SAFETY] Rejected patch:\n{fixed_code}")
                 return {
                     "action": "escalate",
-                    "reason": f"Generated fix is catastrophically unsafe: {safety_warnings}",
+                    "reason": f"Generated patch is unsafe: {safety_warnings}",
                     "status": "waiting_for_approval"
                 }
             
             # Allow with warnings
             if safety_warnings:
-                logger.warning(f"[SAFETY] ⚠️ Script has warnings: {safety_warnings}")
+                logger.warning(f"[SAFETY] ⚠️ Patch has warnings: {safety_warnings}")
             else:
-                logger.info(f"[SAFETY] ✅ Script appears safe")
+                logger.info(f"[SAFETY] ✅ Patch appears safe")
             
             return {
-                "action": "run_remediation_script",
-                "target": plan_data.get('target', 'unknown'),
-                "reason": plan_data.get('reason', 'Automated Fix'),
-                "python_script": script,
+                "action": "apply_code_patch",
+                "target": plan_data.get('file_path', 'unknown'),
+                "reason": plan_data.get('reason', 'Automated Code Fix'),
+                "file_path": plan_data.get('file_path'),
+                "original_code": plan_data.get('original_code'),
+                "fixed_code": fixed_code,
                 "safety_warnings": safety_warnings,
                 "status": "waiting_for_approval"
             }
